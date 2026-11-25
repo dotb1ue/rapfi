@@ -20,6 +20,7 @@
 
 #include "../config.h"
 #include "../core/iohelper.h"
+#include "../eval/classicalpolicy.h"
 #include "../eval/eval.h"
 #include "../eval/evaluator.h"
 #include "../game/board.h"
@@ -205,6 +206,8 @@ void Tuner::installParams() const
             for (size_t side = 0; side < 2; side++)
                 record.scores[i][side] =
                     decodeMoveScoreParam(tuneParams[record.parameterIndices[i][side]]);
+    if (!moveScoreParamRanges.empty())
+        Evaluation::refreshClassicalPolicyNumerators();
     MESSAGEL(tuneParams.size() << " parameters installed.");
     projectMoveScoreScale();
 }
@@ -281,6 +284,7 @@ MoveScoreScaleReport Tuner::projectMoveScoreScale() const
             for (size_t side = 0; side < 2; side++)
                 score[side] = projectedMoveScore(score[side], table, side, report, config);
     }
+    Evaluation::refreshClassicalPolicyNumerators();
 
     DispersionMeasurement exported =
         measureMoveScoreDispersion(moveScoreReferencePositions, config);

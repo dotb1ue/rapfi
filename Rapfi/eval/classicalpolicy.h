@@ -169,8 +169,24 @@ classicalPolicyBaseScore(Rule rule, Color self, PatternCode pcodeBlack, PatternC
                                     classicalPolicyBlendWeights(rule, self));
 }
 
-/// Position-bound classical policy scorer. Context and blend selection are computed once,
-/// while score() remains an inline per-candidate hot-path operation.
+/// Refresh after publishing changes to P4SCORES, while search is idle.
+void refreshClassicalPolicyNumerators() noexcept;
+
+/// Bind the two weighted rows in the same color order as Board::pcodePair().
+struct ClassicalPolicyNumerators
+{
+    ClassicalPolicyNumerators(Rule rule, Color self);
+
+    const int32_t *black;
+    const int32_t *white;
+
+    int baseScore(PatternCode pcodeBlack, PatternCode pcodeWhite) const
+    {
+        return (black[pcodeBlack] + white[pcodeWhite]) / ClassicalPolicyBlend::Scale;
+    }
+};
+
+/// Position-bound classical policy scorer. Context and numerator rows are selected once.
 class ClassicalPolicyScorer
 {
 public:
@@ -181,18 +197,18 @@ public:
                 Pattern4    selfPattern,
                 Pattern4    opponentPattern) const
     {
-        int result = classicalPolicyBaseScore(rule_, self_, pcodeBlack, pcodeWhite, blendWeights_);
+        int result = numerators_.baseScore(pcodeBlack, pcodeWhite);
         if (policyCrossActive_)
             result += getPolicyCross(rule_, self_, context_, selfPattern, opponentPattern);
         return clampMoveScore(result);
     }
 
 private:
-    Rule          rule_;
-    Color         self_;
-    const int    *blendWeights_;
-    PolicyContext context_;
-    bool          policyCrossActive_;
+    Rule                      rule_;
+    Color                     self_;
+    ClassicalPolicyNumerators numerators_;
+    PolicyContext             context_;
+    bool                      policyCrossActive_;
 };
 
 static_assert(std::numeric_limits<int>::max() >= 4LL * (1LL << std::numeric_limits<Score>::digits)

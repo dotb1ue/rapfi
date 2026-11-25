@@ -27,6 +27,43 @@ namespace Evaluation {
 Score   POLICY_CROSS[RULE_NB + 1][PolicyContextCount][PATTERN4_NB][PATTERN4_NB];
 uint8_t POLICY_CROSS_ACTIVE_MASK[RULE_NB + 1] = {};
 
+namespace {
+struct NumeratorRows
+{
+    int32_t self[PCODE_NB];
+    int32_t opponent[PCODE_NB];
+};
+NumeratorRows policyNumerators[RULE_NB + 1];
+}  // namespace
+
+void refreshClassicalPolicyNumerators() noexcept
+{
+    using Blend = ClassicalPolicyBlend;
+    auto fillRows = [](Rule rule, Color self) {
+        const int  *weights = classicalPolicyBlendWeights(rule, self);
+        auto       &rows    = policyNumerators[tableIndex(rule, self)];
+        const auto &own     = P4SCORES[tableIndex(rule, self)];
+        const auto &other   = P4SCORES[tableIndex(rule, ~self)];
+        for (size_t i = 0; i < PCODE_NB; ++i) {
+            rows.self[i]     = weights[Blend::SELF_ATTACK] * own[i].byOwner
+                               + weights[Blend::OPPONENT_DEFENSE] * own[i].byOpponent;
+            rows.opponent[i] = weights[Blend::SELF_DEFENSE] * other[i].byOpponent
+                               + weights[Blend::OPPONENT_ATTACK] * other[i].byOwner;
+        }
+    };
+    fillRows(FREESTYLE, BLACK);
+    fillRows(STANDARD, BLACK);
+    fillRows(RENJU, BLACK);
+    fillRows(RENJU, WHITE);
+}
+
+ClassicalPolicyNumerators::ClassicalPolicyNumerators(Rule rule, Color self)
+{
+    const auto &rows = policyNumerators[tableIndex(rule, self)];
+    black            = self == BLACK ? rows.self : rows.opponent;
+    white            = self == WHITE ? rows.self : rows.opponent;
+}
+
 void resetPolicyCross()
 {
     std::memset(POLICY_CROSS, 0, sizeof(POLICY_CROSS));
@@ -92,7 +129,7 @@ PolicyContext classifyPolicyContext(const Board &board)
 ClassicalPolicyScorer::ClassicalPolicyScorer(Rule rule, const Board &board)
     : rule_(rule)
     , self_(board.sideToMove())
-    , blendWeights_(classicalPolicyBlendWeights(rule, self_))
+    , numerators_(rule, self_)
     , context_(QUIET)
     , policyCrossActive_(false)
 {

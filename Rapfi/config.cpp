@@ -191,6 +191,8 @@ bool Config::loadConfig(std::istream &configStream)
             readModel(*model, pending);
     }
     catch (const std::exception &e) {
+        // A failed inline score override can already have replaced part of P4SCORES.
+        Evaluation::refreshClassicalPolicyNumerators();
         ERRORL("Failed to load config: " << e.what());
         return false;
     }
@@ -475,7 +477,7 @@ void Config::readModel(const cpptoml::table &t, PendingConfig &pending)
                                                     });
             });
 
-        if (auto score = t.get_table("score"))
+        if (auto score = t.get_table("score")) {
             readInlineTables(score, [](const cpptoml::table &table, int tableIdx) {
                 auto selfTable = table.get_table("self");
                 auto oppoTable = table.get_table("oppo");
@@ -490,6 +492,8 @@ void Config::readModel(const cpptoml::table &t, PendingConfig &pending)
                                                            value;
                                                    });
             });
+            Evaluation::refreshClassicalPolicyNumerators();
+        }
     }
 
     // Read scalingFactor
@@ -849,9 +853,12 @@ bool Config::loadModel(std::istream &inStream)
 
     if (in->peek() != std::ios::traits_type::eof() || in->bad())
         return false;
+    // A protocol LOADMODEL can arrive while a stopped ponder search is still draining.
+    Search::Engine.waitForIdle();
     std::memcpy(Evaluation::EVALS, evals, sizeof(Evaluation::EVALS));
     std::memcpy(Evaluation::EVALS_THREAT, evalsThreat, sizeof(Evaluation::EVALS_THREAT));
     std::memcpy(Evaluation::P4SCORES, scores, sizeof(Evaluation::P4SCORES));
+    Evaluation::refreshClassicalPolicyNumerators();
     Evaluation::setScalingFactor(scalingFactor);
     for (size_t table = 0; table < ModelPolicyTableCount; table++)
         Evaluation::installPolicyCross(table, policyCross[table]);

@@ -21,6 +21,7 @@
 #include "../config.h"
 #include "../core/iohelper.h"
 #include "../core/time.h"
+#include "../eval/classicalpolicy.h"
 #include "../eval/eval.h"
 #include "../eval/evaluator.h"
 #include "../game/board.h"
@@ -837,6 +838,7 @@ void Tuner::coalesceMoveScoreLayout(AdamOptimizer<TuneParam> &optimizer)
     for (const CoalescedTable &table : coalescedTables)
         for (size_t i = 0; i < table.quantizedScores.size(); i++)
             table.scores[i] = table.quantizedScores[i];
+    Evaluation::refreshClassicalPolicyNumerators();
     optimizer.swap(newOptimizer);
     tuneParams.swap(newParams);
     syncRecords.swap(newSyncRecords);
