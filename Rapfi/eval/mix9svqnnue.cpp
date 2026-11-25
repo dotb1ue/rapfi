@@ -127,6 +127,11 @@ public:
     void evaluatePolicy(const Weight &w, PolicyBuffer &policyBuffer);
 
 private:
+    // Each perspective owns its accumulator. All nine slots are populated together.
+    const Weight::HeadBucket *cachedGroupBucket = nullptr;
+    alignas(Alignment) int8_t groupInput[ValueSumType::NGroup][ValueSumType::NGroup][FeatureDim];
+    alignas(Alignment) int8_t groupOutput[ValueSumType::NGroup][ValueSumType::NGroup][ValueDim];
+
     int getBucketIndex() { return 0; }
 };
 
@@ -569,40 +574,42 @@ std::tuple<float, float, float> Accumulator::evaluateValue(const Weight &w)
     // global feature sum
     alignas(Alignment) int8_t layer0[FeatureDim + ValueDim * 4];
     simd::crelu<FeatureDim, 256, true>(layer0, valueSum.global.data());
-    // group feature sum
-    alignas(Alignment) int8_t group0[ValueSumType::NGroup][ValueSumType::NGroup][FeatureDim];
-    for (int i = 0; i < ValueSumType::NGroup; i++)
-        for (int j = 0; j < ValueSumType::NGroup; j++)
-            simd::crelu<FeatureDim, 32, true>(group0[i][j], valueSum.group[i][j].data());
 
-    // group linear layer
-    alignas(Alignment) int8_t group1[ValueSumType::NGroup][ValueSumType::NGroup][ValueDim];
+    const bool sameBucket = cachedGroupBucket == &bucket;
+    auto evaluateGroup = [&](int y, int x, const StarBlockWeight<ValueDim, FeatureDim> &weights) {
+        alignas(Alignment) int8_t input[FeatureDim];
+        simd::crelu<FeatureDim, 32, true>(input, valueSum.group[y][x].data());
+        auto &previous = groupInput[y][x];
+        if (sameBucket && std::memcmp(input, previous, sizeof(input)) == 0)
+            return;
 
-    starBlock<ValueDim, FeatureDim>(group1[0][0], group0[0][0], bucket.value_corner);
-    starBlock<ValueDim, FeatureDim>(group1[0][2], group0[0][2], bucket.value_corner);
-    starBlock<ValueDim, FeatureDim>(group1[2][0], group0[2][0], bucket.value_corner);
-    starBlock<ValueDim, FeatureDim>(group1[2][2], group0[2][2], bucket.value_corner);
-
-    starBlock<ValueDim, FeatureDim>(group1[0][1], group0[0][1], bucket.value_edge);
-    starBlock<ValueDim, FeatureDim>(group1[1][0], group0[1][0], bucket.value_edge);
-    starBlock<ValueDim, FeatureDim>(group1[1][2], group0[1][2], bucket.value_edge);
-    starBlock<ValueDim, FeatureDim>(group1[2][1], group0[2][1], bucket.value_edge);
-
-    starBlock<ValueDim, FeatureDim>(group1[1][1], group0[1][1], bucket.value_center);
+        std::memcpy(previous, input, sizeof(input));
+        starBlock<ValueDim, FeatureDim>(groupOutput[y][x], input, weights);
+    };
+    evaluateGroup(0, 0, bucket.value_corner);
+    evaluateGroup(0, 2, bucket.value_corner);
+    evaluateGroup(2, 0, bucket.value_corner);
+    evaluateGroup(2, 2, bucket.value_corner);
+    evaluateGroup(0, 1, bucket.value_edge);
+    evaluateGroup(1, 0, bucket.value_edge);
+    evaluateGroup(1, 2, bucket.value_edge);
+    evaluateGroup(2, 1, bucket.value_edge);
+    evaluateGroup(1, 1, bucket.value_center);
+    cachedGroupBucket = &bucket;
 
     // average pooling
     alignas(Alignment) int8_t group2[2][2][ValueDim];
     using I8B = Batch<ValueDim, int8_t>;
     for (int b = 0; b < I8B::NumBatch; b++) {
-        auto v00 = I8LS::load(group1[0][0] + b * I8B::RegWidth);
-        auto v01 = I8LS::load(group1[0][1] + b * I8B::RegWidth);
-        auto v02 = I8LS::load(group1[0][2] + b * I8B::RegWidth);
-        auto v10 = I8LS::load(group1[1][0] + b * I8B::RegWidth);
-        auto v11 = I8LS::load(group1[1][1] + b * I8B::RegWidth);
-        auto v12 = I8LS::load(group1[1][2] + b * I8B::RegWidth);
-        auto v20 = I8LS::load(group1[2][0] + b * I8B::RegWidth);
-        auto v21 = I8LS::load(group1[2][1] + b * I8B::RegWidth);
-        auto v22 = I8LS::load(group1[2][2] + b * I8B::RegWidth);
+        auto v00 = I8LS::load(groupOutput[0][0] + b * I8B::RegWidth);
+        auto v01 = I8LS::load(groupOutput[0][1] + b * I8B::RegWidth);
+        auto v02 = I8LS::load(groupOutput[0][2] + b * I8B::RegWidth);
+        auto v10 = I8LS::load(groupOutput[1][0] + b * I8B::RegWidth);
+        auto v11 = I8LS::load(groupOutput[1][1] + b * I8B::RegWidth);
+        auto v12 = I8LS::load(groupOutput[1][2] + b * I8B::RegWidth);
+        auto v20 = I8LS::load(groupOutput[2][0] + b * I8B::RegWidth);
+        auto v21 = I8LS::load(groupOutput[2][1] + b * I8B::RegWidth);
+        auto v22 = I8LS::load(groupOutput[2][2] + b * I8B::RegWidth);
 
         auto q00 = I8Op::avg(I8Op::avg(v00, v01), I8Op::avg(v10, v11));
         auto q01 = I8Op::avg(I8Op::avg(v01, v02), I8Op::avg(v11, v12));
