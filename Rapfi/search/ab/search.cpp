@@ -1028,6 +1028,13 @@ MoveTraits classifyMove(SearchStack *ss, Pos move, Color self, Color oppo)
     return mt;
 }
 
+/// Count distinct freestyle squares that can create at least one four on the next move.
+int fourContinuations(const StateInfo &state, Color side)
+{
+    const auto &count = state.p4Count[side];
+    return count[B_FLEX4] + count[C_BLOCK4_FLEX3] + count[D_BLOCK4_PLUS] + count[E_BLOCK4];
+}
+
 /// Step 15 of search<Rule,NT>: compute the LMR reduction for the current move.
 /// Also updates ss->statScore. Called after the move has been made on board, so
 /// the node's move/self/oppo must be passed in rather than derived from board.
@@ -1719,6 +1726,20 @@ moves_loop:
             // Allow LMR to do deeper search in some circumstances
             // Clamp the LMR depth to newDepth (no depth less than one)
             Depth d = std::max(std::min(newDepth - r, newDepth + 1), 1.0f);
+            if constexpr (Rule == FREESTYLE) {
+                if (moveCount >= 4 && d < newDepth && !oppo4 && !thisThread->evaluator && !skipMove
+                    && ss->moveP4[self] >= H_FLEX3 && ss->moveP4[self] < E_BLOCK4
+                    && board.nonPassMoveCount() + 3 <= options.maxMoves && board.movesLeft() >= 3
+                    && !board.p4Count(oppo, A_FIVE)
+                    && fourContinuations(board.stateInfo(), self)
+                           >= fourContinuations(board.stateInfo(1), self) + 2) {
+                    // The move gains at least two distinct four-making squares.
+                    d += std::min(1.0f, newDepth - d);
+#ifdef POLICY_TRAINING
+                    r = newDepth - d;
+#endif
+                }
+            }
 #ifdef POLICY_TRAINING
             currentPolicyTrace.plannedReduction = r;
             recordPolicyTraceSearch(currentPolicyTrace, d);
