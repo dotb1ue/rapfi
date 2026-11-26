@@ -250,7 +250,7 @@ void ABSearchData::clearData(SearchThread &th)
     completedDepth  = 0;
     bestMoveChanges = 0;
     singularRoot    = false;
-    mainHistory.init(0);
+    mainHistory.clear(th.options().rule);
     counterMoveHistory.init(std::make_pair(Pos::NONE, NONE));
 }
 

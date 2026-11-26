@@ -23,6 +23,7 @@
 #include "searcher.h"
 #include "searchstack.h"
 
+#include <cstring>
 #include <limits>
 
 namespace {
@@ -47,6 +48,29 @@ static_assert(std::numeric_limits<int>::max() >= 1LL * 10692 * 2048);
 
 }  // namespace
 
+namespace Search {
+
+void MainHistory::clear(Rule rule)
+{
+    raw.init(0);
+    std::memset(bonuses, 0, sizeof(bonuses));
+    for (Color side : {BLACK, WHITE}) {
+        const int table = historyTableIndex(rule, side);
+        weights[side][HIST_ATTACK] = MainHistoryAttackWeight[table];
+        weights[side][HIST_QUIET]  = MainHistoryQuietWeight[table];
+    }
+}
+
+void MainHistory::update(Color side, Pos pos, MoveHistoryType type, int bonus)
+{
+    constexpr int WeightScale = 256 * 256;
+    auto         &entry       = raw[side][pos][type];
+    entry << bonus;
+    bonuses[side][pos][type] = int16_t(entry.get() * weights[side][type] / WeightScale);
+}
+
+}  // namespace Search
+
 namespace Search::AB {
 
 MoveHistoryScoring makeMoveHistoryScoring(Rule                      rule,
@@ -55,11 +79,7 @@ MoveHistoryScoring makeMoveHistoryScoring(Rule                      rule,
                                           const CounterMoveHistory &counterMoveHistory)
 {
     int table = historyTableIndex(rule, sideToMove);
-    return {&mainHistory,
-            &counterMoveHistory,
-            MainHistoryAttackWeight[table],
-            MainHistoryQuietWeight[table],
-            CounterMoveBonus[table]};
+    return {&mainHistory, &counterMoveHistory, CounterMoveBonus[table]};
 }
 
 void HistoryTracker::addSearchedMove(Pos move, Pos currentBestMove)
@@ -85,19 +105,19 @@ void HistoryTracker::updateBestmoveStats(Depth depth, Pos bestMove, Value bestVa
     int      bonus  = statBonus(board.thisThread()->options().rule, depth);
 
     if (selfP4 >= H_FLEX3) {
-        searchData->mainHistory[self][bestMove][HIST_ATTACK] << bonus;
+        searchData->mainHistory.update(self, bestMove, HIST_ATTACK, bonus);
     }
     else if (!oppo4 && selfP4 < H_FLEX3) {
         updateQuietStats(bestMove, bonus);
 
         // Decrease stats for all the other played non-best quiet moves
         for (int i = 0; i < quietCount; i++)
-            searchData->mainHistory[self][quietsSearched[i]][HIST_QUIET] << -bonus;
+            searchData->mainHistory.update(self, quietsSearched[i], HIST_QUIET, -bonus);
     }
 
     // Decrease stats for all the other played non-best attack moves
     for (int i = 0; i < attackCount; i++)
-        searchData->mainHistory[self][attacksSearched[i]][HIST_ATTACK] << -bonus;
+        searchData->mainHistory.update(self, attacksSearched[i], HIST_ATTACK, -bonus);
 
     // Update counter move history if last move is valid (not a pass)
     // Only update if last opponent move is not a four (otherwise we only have one possible reply)
@@ -127,7 +147,7 @@ void HistoryTracker::updateTTMoveStats(Depth depth, Pos ttMove, Value ttValue, V
             updateQuietStats(ttMove, bonus);
         // Penalty for a quiet ttMove that fails low
         else
-            searchData->mainHistory[self][ttMove][HIST_QUIET] << -bonus;
+            searchData->mainHistory.update(self, ttMove, HIST_QUIET, -bonus);
     }
 }
 
@@ -135,7 +155,7 @@ void HistoryTracker::updateQuietStats(Pos move, int bonus)
 {
     Color self = board.sideToMove();
 
-    searchData->mainHistory[self][move][HIST_QUIET] << bonus;
+    searchData->mainHistory.update(self, move, HIST_QUIET, bonus);
     searchStack->setKiller(move);  // Update killer heuristic move
 }
 

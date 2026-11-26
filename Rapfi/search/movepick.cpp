@@ -365,14 +365,8 @@ void MovePicker::scoreAllMoves()
 
         int historyBonus = 0;
         if (bool(Type & MAIN_HISTORY) && historyScoring.mainHistory) {
-            if (board.pattern4(m.pos, self) >= H_FLEX3) {
-                historyBonus = (*historyScoring.mainHistory)[self][m.pos][HIST_ATTACK]
-                               * historyScoring.attackWeight / MoveHistoryScoring::WeightScale;
-            }
-            else {
-                historyBonus = (*historyScoring.mainHistory)[self][m.pos][HIST_QUIET]
-                               * historyScoring.quietWeight / MoveHistoryScoring::WeightScale;
-            }
+            auto type = board.pattern4(m.pos, self) >= H_FLEX3 ? HIST_ATTACK : HIST_QUIET;
+            historyBonus = historyScoring.mainHistory->orderingBonus(self, m.pos, type);
         }
 
         int counterMoveBonus = 0;

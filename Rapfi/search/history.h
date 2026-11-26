@@ -105,7 +105,24 @@ enum MoveHistoryType { HIST_ATTACK, HIST_QUIET, MAIN_HIST_TYPE_NB };
 /// MainHistory records how often a certain type of move has been successful or unsuccessful
 /// (causing a beta cutoff) during the current search. It is indexed by color of the move,
 /// move's position, and the move's history type.
-typedef HistTable<int16_t, 10692, SIDE_NB, FULL_BOARD_CELL_COUNT, MAIN_HIST_TYPE_NB> MainHistory;
+class MainHistory
+{
+public:
+    void clear(Rule rule);
+    void update(Color side, Pos pos, MoveHistoryType type, int bonus);
+
+    /// Reductions use raw history. Move ordering uses its weighted value for this search.
+    const auto &operator[](Color side) const { return raw[side]; }
+    int orderingBonus(Color side, Pos pos, MoveHistoryType type) const
+    {
+        return bonuses[side][pos][type];
+    }
+
+private:
+    HistTable<int16_t, 10692, SIDE_NB, FULL_BOARD_CELL_COUNT, MAIN_HIST_TYPE_NB> raw;
+    int16_t bonuses[SIDE_NB][FULL_BOARD_CELL_COUNT][MAIN_HIST_TYPE_NB];
+    int     weights[SIDE_NB][MAIN_HIST_TYPE_NB];
+};
 
 /// CounterMoveHistory records a natural response of moves irrespective of the actual position.
 /// It is indexed by color of the previous move, previous move's position and current move's type.
@@ -115,12 +132,8 @@ typedef HistTable<std::pair<Pos, Pattern4>, 0, SIDE_NB, MAX_MOVES> CounterMoveHi
 /// Alpha-beta owns and populates these tables; other searchers leave this view empty.
 struct MoveHistoryScoring
 {
-    static constexpr int WeightScale = 256 * 256;
-
     const MainHistory        *mainHistory        = nullptr;
     const CounterMoveHistory *counterMoveHistory = nullptr;
-    int                       attackWeight       = 0;
-    int                       quietWeight        = 0;
     int                       counterMoveBonus   = 0;
 };
 
