@@ -26,6 +26,7 @@
 #include "candarea.h"
 #include "pattern.h"
 
+#include <array>
 #include <cassert>
 #include <cstring>
 #include <memory>
@@ -198,6 +199,16 @@ public:
         assert(pos >= 0 && pos < FULL_BOARD_CELL_COUNT);
         assert(side == BLACK || side == WHITE);
         return Pattern4((pattern4x2[pos] >> (4 * side)) & 0xF);
+    }
+
+    /// Read consecutive packed Pattern4 pairs, with black in the low nibble of each byte.
+    template <size_t N>
+    std::array<uint8_t, N> pattern4Pairs(Pos first) const
+    {
+        assert(first >= 0 && size_t(first) + N <= FULL_BOARD_CELL_COUNT);
+        std::array<uint8_t, N> pairs;
+        std::memcpy(pairs.data(), pattern4x2 + first, N);
+        return pairs;
     }
 
     /// Line-level pattern of one side at pos in direction dir.

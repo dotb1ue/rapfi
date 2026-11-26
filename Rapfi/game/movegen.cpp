@@ -24,6 +24,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <simde/x86/sse2.h>
 
 namespace {
 
@@ -110,6 +111,43 @@ constexpr bool preCheckFilter(const Board &board, Color side)
     }
 
     return true;
+}
+
+// -------------------------------------------------
+// Fixed QVCF neighborhood
+
+constexpr int  QvcfRadius   = 4;
+constexpr auto QvcfRowMasks = [] {
+    std::array<unsigned, 2 * QvcfRadius + 1> rows {};
+    for (Direction offset : RANGE_SQUARE2_LINE4) {
+        Pos p = Pos(QvcfRadius, QvcfRadius) + offset;
+        rows[p.y()] |= 1U << p.x();
+    }
+    return rows;
+}();
+
+ScoredMove *generateQvcfRows(const Board &board, ScoredMove *moveList, Pos center, Pattern4 minimum)
+{
+    // Even the bottom stencil row has a full padding row after it for the 16-byte load.
+    static_assert(BOARD_BOUNDARY > QvcfRadius && FULL_BOARD_SIZE >= 16);
+    const int  shift     = 4 * board.sideToMove();
+    const auto nibble    = simde_mm_set1_epi8(int8_t(0xf << shift));
+    const auto minimumP4 = simde_mm_set1_epi8(int8_t(minimum << shift));
+    Pos        row       = center + QvcfRadius * UP_LEFT;
+    for (unsigned columns : QvcfRowMasks) {
+        const auto pairs = board.pattern4Pairs<16>(row);
+        const auto p4    = simde_mm_and_si128(simde_mm_loadu_si128(pairs.data()), nibble);
+        const auto hits  = simde_mm_cmpeq_epi8(simde_mm_max_epu8(p4, minimumP4), p4);
+        uint64_t   bits  = simde_mm_movemask_epi8(hits) & columns;
+        while (bits) {
+            Pos pos = row + pop_lsb(bits) * RIGHT;
+            // Occupied cells retain their placement-time pattern. Use the raw candidate set here.
+            if (board.isEmptyCandidate(pos))
+                *moveList++ = pos;
+        }
+        row += DOWN;
+    }
+    return moveList;
 }
 
 // -------------------------------------------------
@@ -683,6 +721,15 @@ ScoredMove *generateNeighbors(const Board     &board,
 
     if (!preCheckFilter<Type>(board, self))
         return moveList;
+
+    if constexpr (Type == VCF || Type == (VCF | COMB)) {
+        if (neighbors == RANGE_SQUARE2_LINE4.data() && numNeighbors == RANGE_SQUARE2_LINE4.size()
+            && board.isInBoard(center))
+            return generateQvcfRows(board,
+                                    moveList,
+                                    center,
+                                    Type == VCF ? E_BLOCK4 : D_BLOCK4_PLUS);
+    }
 
     for (size_t i = 0; i < numNeighbors; i++) {
         Pos pos = center + neighbors[i];
